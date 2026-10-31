@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Renewal Tracker</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1b1f24;--mute:#6b7280;--line:#e5e7eb;--accent:#1f6feb;--ok:#2d7d5a;--warn:#d9822b;--bad:#c0392b;--okbg:#e6f4ec;--warnbg:#fdf0e1;--badbg:#fbe9e7}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1317;--card:#171c22;--ink:#e6e9ed;--mute:#97a0ab;--line:#272e36;--accent:#5b9dff;--ok:#5cc596;--warn:#f0a85a;--bad:#ff7a6b;--okbg:#14291f;--warnbg:#2e2113;--badbg:#321816}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 -apple-system,Segoe UI,Roboto,Arial,sans-serif}
+header{display:flex;align-items:center;gap:16px;padding:14px 20px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
+h1{font-size:18px;margin:0}
+nav{display:flex;gap:4px;flex-wrap:wrap}
+nav button{background:none;border:0;padding:8px 14px;border-radius:8px;color:var(--mute);cursor:pointer;font:inherit}
+nav button.on{background:var(--bg);color:var(--ink);font-weight:600}
+main{max-width:980px;margin:0 auto;padding:20px 16px 60px}
+.banner{background:var(--warnbg);color:var(--warn);border:1px solid var(--warn);padding:10px 14px;border-radius:8px;margin-bottom:16px;font-size:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:20px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.stat b{display:block;font-size:26px}.stat span{color:var(--mute);font-size:13px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+.card h2{font-size:15px;margin:0 0 12px}
+.row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border:0}
+.row .grow{flex:1;min-width:0}
+.row .t{font-weight:600}.row .s{color:var(--mute);font-size:13px;overflow:hidden;text-overflow:ellipsis}
+.done .t{text-decoration:line-through;color:var(--mute)}
+.pill{padding:3px 10px;border-radius:99px;font-size:12px;font-weight:600;white-space:nowrap}
+.ok{background:var(--okbg);color:var(--ok)}.warn{background:var(--warnbg);color:var(--warn)}.bad{background:var(--badbg);color:var(--bad)}.mute{background:var(--bg);color:var(--mute)}
+button.b,a.b{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;font:inherit;font-size:14px}
+button.g{background:none;border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:6px 10px;cursor:pointer;font:inherit;font-size:13px}
+button.g:hover{background:var(--bg)}
+form{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;align-items:end}
+label{font-size:12px;color:var(--mute);display:block}
+input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit;margin-top:3px}
+.wide{grid-column:1/-1}
+.bar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
+.empty{color:var(--mute);padding:14px 0;text-align:center}
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:8px;display:none;max-width:90vw}
+.hint{color:var(--mute);font-size:13px;margin:6px 0 0}
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);max-width:380px;width:92%}
+</style>
+</head>
+<body>
+<header>
+  <h1>🔔 Renewal Tracker</h1>
+  <nav id="nav"></nav>
+</header>
+<main id="main"></main>
+<div id="toast"></div>
+<dialog id="dlg"><form method="dialog" id="dlgForm" style="display:block"></form></dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+let S = null, tab = 'dashboard', filter = 'open';
+const TABS = [['dashboard','Dashboard'],['tasks','Tasks'],['certs','Certificates'],['notif','Notifications'],['settings','Settings']];
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function api(url, method = 'GET', body) {
+  const r = await fetch(url, { method, headers: body ? {'Content-Type':'application/json'} : {}, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { toast(j.error || 'Something went wrong'); throw new Error(j.error); }
+  return j;
+}
+function toast(m) { const t = $('#toast'); t.textContent = m; t.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = 'none', 3500); }
+const daysUntil = d => Math.round((Date.parse(d + 'T00:00:00Z') - Date.parse(S.today + 'T00:00:00Z')) / 864e5);
+function dueTxt(d) { const n = daysUntil(d); return n < 0 ? `${-n}d overdue` : n === 0 ? 'today' : `${n}d left`; }
+function cls(d, warnAt = 14) { const n = daysUntil(d); return n < 0 ? 'bad' : n <= 7 ? 'bad' : n <= warnAt ? 'warn' : 'ok'; }
+
+async function load() { S = await api('/api/state'); render(); }
+
+function render() {
+  $('#nav').innerHTML = TABS.map(([k, l]) => `<button class="${tab === k ? 'on' : ''}" onclick="tab='${k}';render()">${l}</button>`).join('');
+  const banner = S.smtpConfigured ? '' : `<div class="banner">⚠ Email is in <b>dry-run</b> mode — SMTP isn't configured, so no real emails are sent. Set <code>SMTP_HOST</code> etc. in <code>.env</code> (see README).</div>`;
+  $('#main').innerHTML = banner + ({ dashboard, tasks, certs, notif, settings })[tab]();
+}
+
+function dashboard() {
+  const openT = S.tasks.filter(t => t.status !== 'done');
+  const overdue = openT.filter(t => t.due && daysUntil(t.due) < 0).length;
+  const exp30 = S.certs.filter(c => daysUntil(c.expiry) >= 0 && daysUntil(c.expiry) <= 30).length;
+  const expired = S.certs.filter(c => daysUntil(c.expiry) < 0).length;
+  const certs = [...S.certs].sort((a, b) => a.expiry.localeCompare(b.expiry)).slice(0, 5);
+  const tasks = openT.filter(t => t.due).sort((a, b) => a.due.localeCompare(b.due)).slice(0, 5);
+  return `<div class="grid">
+    <div class="stat"><b>${openT.length}</b><span>Open tasks</span></div>
+    <div class="stat"><b style="color:var(--bad)">${overdue}</b><span>Overdue tasks</span></div>
+    <div class="stat"><b style="color:var(--warn)">${exp30}</b><span>Certs expiring ≤30d</span></div>
+    <div class="stat"><b style="color:var(--bad)">${expired}</b><span>Expired certs</span></div></div>
+  <div class="card"><h2>Next certificate expiries</h2>${certs.map(certRow).join('') || '<div class="empty">No certificates yet</div>'}</div>
+  <div class="card"><h2>Upcoming tasks</h2>${tasks.map(taskRow).join('') || '<div class="empty">No dated tasks</div>'}</div>`;
+}
+
+const taskRow = t => `<div class="row ${t.status === 'done' ? 'done' : ''}">
+  <input type="checkbox" style="width:auto;margin:0" ${t.status === 'done' ? 'checked' : ''} onchange="toggleTask('${t.id}',this.checked)">
+  <div class="grow"><div class="t">${esc(t.title)}</div><div class="s">${esc(t.priority)} priority${t.due ? ' · due ' + t.due : ''}${t.ownerEmail ? ' · ' + esc(t.ownerEmail) : ''}${t.description ? ' · ' + esc(t.description) : ''}</div></div>
+  ${t.due && t.status !== 'done' ? `<span class="pill ${cls(t.due, 3)}">${dueTxt(t.due)}</span>` : ''}
+  <button class="g" onclick="delItem('tasks','${t.id}')">Delete</button></div>`;
+
+const certRow = c => `<div class="row">
+  <div class="grow"><div class="t">${esc(c.name)}</div><div class="s">${esc(c.domain)}${c.issuer ? ' · ' + esc(c.issuer) : ''} · expires ${c.expiry}${c.ownerEmail ? ' · ' + esc(c.ownerEmail) : ''}${c.history?.length ? ' · renewed ' + c.history.length + '×' : ''}</div></div>
+  <span class="pill ${cls(c.expiry, 30)}">${daysUntil(c.expiry) < 0 ? 'expired ' + -daysUntil(c.expiry) + 'd ago' : daysUntil(c.expiry) + 'd left'}</span>
+  <button class="g" onclick="renewCert('${c.id}')">Mark renewed</button>
+  <button class="g" onclick="delItem('certs','${c.id}')">Delete</button></div>`;
+
+function tasks() {
+  let list = S.tasks.filter(t => filter === 'all' || (filter === 'done') === (t.status === 'done'));
+  list.sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999'));
+  return `<div class="card"><h2>Add task</h2><form onsubmit="addTask(event)">
+    <div class="wide"><label>Title<input name="title" required></label></div>
+    <label>Due date<input name="due" type="date"></label>
+    <label>Priority<select name="priority"><option>low</option><option selected>medium</option><option>high</option></select></label>
+    <label>Assignee email (gets reminders)<input name="ownerEmail" type="email"></label>
+    <div class="wide"><label>Notes<input name="description"></label></div>
+    <button class="b">Add task</button></form></div>
+  <div class="bar">${['open','done','all'].map(f => `<button class="g" style="${filter === f ? 'background:var(--bg);font-weight:600' : ''}" onclick="filter='${f}';render()">${f}</button>`).join('')}</div>
+  <div class="card">${list.map(taskRow).join('') || '<div class="empty">Nothing here</div>'}</div>`;
+}
+
+function certs() {
+  const list = [...S.certs].sort((a, b) => a.expiry.localeCompare(b.expiry));
+  return `<div class="card"><h2>Add certificate</h2><form onsubmit="addCert(event)">
+    <label>Name<input name="name" required placeholder="Production wildcard"></label>
+    <label>Domain / host<input name="domain" placeholder="example.com"></label>
+    <label>Expiry date<input name="expiry" type="date" required></label>
+    <label>Issuer<input name="issuer" placeholder="Let's Encrypt, DigiCert…"></label>
+    <label>Owner email (gets reminders)<input name="ownerEmail" type="email"></label>
+    <div class="wide"><label>Notes<input name="notes"></label></div>
+    <div class="wide"><button type="button" class="g" onclick="lookup(this.form)">🔍 Fetch expiry from live domain</button> <button class="b">Add certificate</button></div></form></div>
+  <div class="card">${list.map(certRow).join('') || '<div class="empty">No certificates tracked</div>'}</div>`;
+}
+
+function notif() {
+  return `<div class="bar"><button class="b" onclick="runCheck()">Run reminder check now</button><button class="g" onclick="clearNotif()">Clear log</button></div>
+  <div class="card"><h2>Email notifications</h2>${S.notifications.map(n => `<div class="row"><div class="grow"><div class="t">${esc(n.subject)}</div><div class="s">${new Date(n.at).toLocaleString()} → ${esc(n.to.join(', '))}</div></div><span class="pill ${n.status === 'sent' ? 'ok' : n.status.startsWith('FAILED') ? 'bad' : 'mute'}" title="${esc(n.status)}">${esc(n.status.length > 22 ? n.status.slice(0, 22) + '…' : n.status)}</span></div>`).join('') || '<div class="empty">No emails sent yet</div>'}</div>`;
+}
+
+function settings() {
+  const s = S.settings;
+  return `<div class="card"><h2>Reminder settings</h2><form onsubmit="saveSettings(event)">
+    <div class="wide"><label>Recipients (one per line — get every reminder)<textarea name="recipients" rows="3">${esc(s.recipients.join('\n'))}</textarea></label></div>
+    <label>Certificate reminders (days before expiry)<input name="certDays" value="${s.certDays.join(', ')}"></label>
+    <label>Task reminders (days before due)<input name="taskDays" value="${s.taskDays.join(', ')}"></label>
+    <label>Send after hour (server time, 0–23)<input name="sendHour" type="number" min="0" max="23" value="${s.sendHour}"></label>
+    <div class="wide"><button class="b">Save</button> <button type="button" class="g" onclick="testEmail()">Send test email</button>
+    <p class="hint">Overdue tasks and expired certificates are re-sent daily until resolved. Each threshold is emailed once, as a single digest.</p></div></form></div>`;
+}
+
+// ---- actions ----
+const fd = e => { e.preventDefault(); return Object.fromEntries(new FormData(e.target)); };
+async function addTask(e) { await api('/api/tasks', 'POST', fd(e)); toast('Task added'); load(); }
+async function addCert(e) { await api('/api/certs', 'POST', fd(e)); toast('Certificate added'); load(); }
+async function toggleTask(id, done) { await api('/api/tasks/' + id, 'PUT', { status: done ? 'done' : 'open' }); load(); }
+async function delItem(kind, id) { if (confirm('Delete this item?')) { await api(`/api/${kind}/${id}`, 'DELETE'); load(); } }
+async function renewCert(id) {
+  const c = S.certs.find(x => x.id === id);
+  const d = new Date(Math.max(Date.now(), Date.parse(c.expiry))); d.setFullYear(d.getFullYear() + 1);
+  const v = prompt('New expiry date (YYYY-MM-DD):', d.toISOString().slice(0, 10));
+  if (v) { await api(`/api/certs/${id}/renew`, 'POST', { expiry: v }); toast('Renewed — reminders reset'); load(); }
+}
+async function lookup(form) {
+  const host = form.domain.value.trim(); if (!host) return toast('Enter a domain first');
+  toast('Checking…');
+  const r = await api('/api/certs/lookup?host=' + encodeURIComponent(host));
+  form.expiry.value = r.expiry; if (!form.issuer.value) form.issuer.value = r.issuer; if (!form.name.value) form.name.value = r.subject;
+  toast('Expiry found: ' + r.expiry);
+}
+async function saveSettings(e) {
+  const f = fd(e), nums = v => v.split(/[,\s]+/).filter(Boolean).map(Number);
+  await api('/api/settings', 'PUT', { recipients: f.recipients.split(/[\n,;\s]+/).filter(Boolean), certDays: nums(f.certDays), taskDays: nums(f.taskDays), sendHour: +f.sendHour });
+  toast('Settings saved'); load();
+}
+async function testEmail() { const r = await api('/api/test-email', 'POST'); toast('Test email: ' + r.status); load(); }
+async function runCheck() { const r = await api('/api/run-check', 'POST'); toast(`Reminders sent: ${r.sent} (${r.note})`); load(); }
+async function clearNotif() { await api('/api/notifications', 'DELETE'); load(); }
+
+load();
+setInterval(() => { if (tab === 'notif') load(); }, 30000);
+</script>
+</body>
+</html>
